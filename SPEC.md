@@ -4,16 +4,24 @@ A terminal-based workflow manager that tracks numbered tasks/projects with a two
 ​
 ---
 ​
-## Environment Requirements
+## Configuration
 ​
-Two environment variables must be set:
+Config file: `$XDG_CONFIG_HOME/wf/config.yaml` (defaults to `~/.config/wf/config.yaml`).
 ​
-| Variable | Description |
-|---|---|
-| `WORKFLOWS_DIR` | Root directory where all workflow directories live (e.g., `~/workflows`) |
-| `OBSIDIAN_VAULT_DIR` | Root of an Obsidian vault. Symlinks are created under `<vault>/Archive/Workflows/` |
+```yaml
+workflows_dir: ~/workflows           # where workflow dirs live
+vault_dir: ~/git/ObsiNotes           # Obsidian vault root
+vault_subpath: notes/workflows       # path inside the vault for workflow symlinks (default)
+```
 ​
-If either is unset, all commands abort with `<VAR> is not set`.
+For each value, lookup order is:
+​
+1. Config file
+2. Env var (`WORKFLOWS_DIR`, `OBSIDIAN_VAULT_DIR`) — fallback for `workflows_dir` / `vault_dir`
+3. Built-in default — only `vault_subpath` has one (`notes/workflows`)
+​
+If `workflows_dir` or `vault_dir` cannot be resolved, the command aborts with
+`<VAR> is not set`.
 ​
 External tools assumed available on `$PATH`: `tmux`.
 ​
@@ -64,7 +72,7 @@ Auto-generated per workflow with boilerplate instructions telling Claude Code to
 ​
 ### Obsidian Symlink
 ​
-A symlink is created at `<OBSIDIAN_VAULT_DIR>/Archive/Workflows/<NNN-slug>` pointing to the workflow's `notes/` directory, so Obsidian can browse workflow notes.
+A symlink is created at `<OBSIDIAN_VAULT_DIR>/notes/workflows/<NNN-slug>` pointing to the workflow's `notes/` directory, so Obsidian can browse workflow notes.
 ​
 ---
 ​
@@ -122,7 +130,7 @@ Creates:
 2. `workflow.yaml` with status `wip` and today's date.
 3. `notes/<NNN-slug>.md` with `# <NNN-slug>` content.
 4. `.claude/CLAUDE.md` with boilerplate.
-5. Obsidian symlink: `<OBSIDIAN_VAULT_DIR>/Archive/Workflows/<NNN-slug>` -> `<dir>/notes/`.
+5. Obsidian symlink: `<OBSIDIAN_VAULT_DIR>/notes/workflows/<NNN-slug>` -> `<dir>/notes/`.
 6. Detached tmux session named `<NNN-slug>` with cwd set to the workflow directory.
 7. Splits the tmux session horizontally (left/right). Left pane runs `cl` (Claude Code). Right pane is selected as active.
 ​
@@ -131,7 +139,7 @@ Prints a summary:
 Created 042-fix-auth-bug
   dir   /path/to/042-fix-auth-bug
   note  /path/to/042-fix-auth-bug/notes/042-fix-auth-bug.md
-  link  /obsidian/Archive/Workflows/042-fix-auth-bug -> /path/to/042-fix-auth-bug
+  link  /obsidian/notes/workflows/042-fix-auth-bug -> /path/to/042-fix-auth-bug
   tmux  042-fix-auth-bug
 ```
 ​
@@ -368,8 +376,8 @@ Note: The TUI's `t` keybinding and `CreateWorkflow` (from `n` in TUI) do not per
 ​
 ## Obsidian Integration
 ​
-- **Symlink**: `<OBSIDIAN_VAULT_DIR>/Archive/Workflows/<NNN-slug>` -> `<workflow-dir>/notes/`
-- **Open**: Uses `open obsidian://open?vault=<vault-name>&file=Archive/Workflows/<NNN-slug>/<NNN-slug>.md` where vault name is derived as `filepath.Base(filepath.Dir(filepath.Dir(obsidianDir)))` (i.e., the vault root directory name).
+- **Symlink**: `<OBSIDIAN_VAULT_DIR>/notes/workflows/<NNN-slug>` -> `<workflow-dir>/notes/`
+- **Open**: Uses `open obsidian://open?vault=<vault-name>&file=notes/workflows/<NNN-slug>/<NNN-slug>.md` where vault name is derived as `filepath.Base(obsidianDir)` (i.e., the vault root directory name).
 ​
 ---
 ​

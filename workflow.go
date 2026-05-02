@@ -42,8 +42,69 @@ func envOrDie(name string) (string, error) {
 	return v, nil
 }
 
-func WorkflowsDir() (string, error) { return envOrDie("WORKFLOWS_DIR") }
-func ObsidianDir() (string, error)  { return envOrDie("OBSIDIAN_VAULT_DIR") }
+// ---------------- Config (~/.config/wf/config.yaml) ----------------
+
+type Config struct {
+	WorkflowsDir string `yaml:"workflows_dir"`
+	VaultDir     string `yaml:"vault_dir"`
+	VaultSubpath string `yaml:"vault_subpath"`
+}
+
+var (
+	cachedConfig *Config
+)
+
+func loadConfig() Config {
+	if cachedConfig != nil {
+		return *cachedConfig
+	}
+	cfg := Config{}
+	path := configPath()
+	if data, err := os.ReadFile(path); err == nil {
+		_ = yaml.Unmarshal(data, &cfg)
+	}
+	cachedConfig = &cfg
+	return cfg
+}
+
+func configPath() string {
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		return filepath.Join(x, "wf", "config.yaml")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "wf", "config.yaml")
+}
+
+func expandHome(p string) string {
+	if strings.HasPrefix(p, "~/") || p == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	return p
+}
+
+func WorkflowsDir() (string, error) {
+	if v := loadConfig().WorkflowsDir; v != "" {
+		return expandHome(v), nil
+	}
+	return envOrDie("WORKFLOWS_DIR")
+}
+
+func ObsidianDir() (string, error) {
+	if v := loadConfig().VaultDir; v != "" {
+		return expandHome(v), nil
+	}
+	return envOrDie("OBSIDIAN_VAULT_DIR")
+}
+
+func vaultSubpath() string {
+	if v := loadConfig().VaultSubpath; v != "" {
+		return v
+	}
+	return "notes/workflows"
+}
 
 // ---------------- Slug ----------------
 
@@ -67,7 +128,7 @@ func slugify(s string) string {
 // ---------------- Obsidian path ----------------
 
 func obsidianLinkPath(obsidian, name string) string {
-	return filepath.Join(obsidian, "Archive", "Workflows", name)
+	return filepath.Join(obsidian, vaultSubpath(), name)
 }
 
 // ---------------- Types ----------------
@@ -223,7 +284,7 @@ func CreateWorkflow(name string, split bool) (*Workflow, error) {
 		return nil, err
 	}
 
-	linkDir := filepath.Join(obsidian, "Archive", "Workflows")
+	linkDir := filepath.Join(obsidian, vaultSubpath())
 	if err := os.MkdirAll(linkDir, 0755); err != nil {
 		return nil, err
 	}
