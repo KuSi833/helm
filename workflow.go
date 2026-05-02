@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -13,6 +12,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// ---------------- Status ----------------
 
 type Status string
 
@@ -28,13 +29,48 @@ const (
 
 var allStatuses = []Status{StatusWIP, StatusTodo, StatusLater, StatusBlocked, StatusCompleted, StatusDead}
 
-func (s Status) Active() bool {
-	return s == StatusWIP || s == StatusBlocked
+func (s Status) Active() bool    { return s == StatusWIP || s == StatusBlocked }
+func (s Status) NeedsTmux() bool { return s == StatusWIP || s == StatusTodo || s == StatusBlocked }
+
+// ---------------- Env ----------------
+
+func envOrDie(name string) (string, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return "", fmt.Errorf("%s is not set", name)
+	}
+	return v, nil
 }
 
-func (s Status) NeedsTmux() bool {
-	return s == StatusWIP || s == StatusTodo || s == StatusBlocked
+func WorkflowsDir() (string, error) { return envOrDie("WORKFLOWS_DIR") }
+func ObsidianDir() (string, error)  { return envOrDie("OBSIDIAN_VAULT_DIR") }
+
+// ---------------- Slug ----------------
+
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	out := b.String()
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
+	return strings.Trim(out, "-")
 }
+
+// ---------------- Obsidian path ----------------
+
+func obsidianLinkPath(obsidian, name string) string {
+	return filepath.Join(obsidian, "Archive", "Workflows", name)
+}
+
+// ---------------- Types ----------------
 
 type Meta struct {
 	Status  Status `yaml:"status"`
@@ -53,38 +89,7 @@ type Workflow struct {
 
 var dirRe = regexp.MustCompile(`^(\d{3})-(.+)$`)
 
-func slugify(s string) string {
-	s = strings.ToLower(s)
-	var b strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-	out := b.String()
-	for strings.Contains(out, "--") {
-		out = strings.ReplaceAll(out, "--", "-")
-	}
-	out = strings.Trim(out, "-")
-	return out
-}
-
-func envOrDie(name string) (string, error) {
-	v := os.Getenv(name)
-	if v == "" {
-		return "", fmt.Errorf("%s is not set", name)
-	}
-	return v, nil
-}
-
-func WorkflowsDir() (string, error)  { return envOrDie("WORKFLOWS_DIR") }
-func ObsidianDir() (string, error)   { return envOrDie("OBSIDIAN_VAULT_DIR") }
-
-func obsidianLinkPath(obsidian, name string) string {
-	return filepath.Join(obsidian, "Archive", "Workflows", name)
-}
+// ---------------- Persistence ----------------
 
 func loadMeta(dir string) Meta {
 	m := Meta{Status: StatusUnknown}
@@ -161,6 +166,8 @@ func nextNumber() (int, error) {
 	return max + 1, nil
 }
 
+// ---------------- Operations ----------------
+
 const claudeMD = `# CLAUDE.md
 
 This directory is a workflow. Treat ` + "`notes/" + `%[1]s` + ".md`" + ` as the index for this workflow.
@@ -229,10 +236,9 @@ func CreateWorkflow(name string, split bool) (*Workflow, error) {
 	if err := tmuxNewSession(dirName, dir); err != nil {
 		return nil, err
 	}
-
 	if split {
-		_ = exec.Command("tmux", "split-window", "-h", "-b", "-t", dirName, "cl").Run()
-		_ = exec.Command("tmux", "select-pane", "-t", dirName+":0.1").Run()
+		_ = tmuxSplitWithCommand(dirName, "cl")
+		_ = tmuxSelectPane(dirName + ":0.1")
 	}
 
 	return &Workflow{
@@ -277,7 +283,6 @@ func RenameWorkflow(w Workflow, newName string) (*Workflow, error) {
 	newDirName := fmt.Sprintf("%03d-%s", w.Number, newSlug)
 	newDir := filepath.Join(root, newDirName)
 
-	// Rename note file inside notes/ first.
 	oldNote := filepath.Join(w.Dir, "notes", w.Name+".md")
 	newNote := filepath.Join(w.Dir, "notes", newDirName+".md")
 	if _, err := os.Stat(oldNote); err == nil {
@@ -286,25 +291,21 @@ func RenameWorkflow(w Workflow, newName string) (*Workflow, error) {
 		}
 	}
 
-	// Update CLAUDE.md references.
 	claudePath := filepath.Join(w.Dir, ".claude", "CLAUDE.md")
 	if data, err := os.ReadFile(claudePath); err == nil {
 		updated := strings.ReplaceAll(string(data), w.Name, newDirName)
 		_ = os.WriteFile(claudePath, []byte(updated), 0644)
 	}
 
-	// Rename workflow directory.
 	if err := os.Rename(w.Dir, newDir); err != nil {
 		return nil, err
 	}
 
-	// Recreate Obsidian symlink.
 	_ = os.Remove(obsidianLinkPath(obsidian, w.Name))
 	_ = os.Symlink(filepath.Join(newDir, "notes"), obsidianLinkPath(obsidian, newDirName))
 
-	// Rename tmux session.
 	if w.HasTmux {
-		_ = exec.Command("tmux", "rename-session", "-t", w.Name, newDirName).Run()
+		_ = tmuxRenameSession(w.Name, newDirName)
 	}
 
 	out := w
@@ -349,16 +350,4 @@ func ToggleTmux(w *Workflow) error {
 	}
 	w.HasTmux = true
 	return nil
-}
-
-func tmuxHasSession(name string) bool {
-	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
-}
-
-func tmuxNewSession(name, dir string) error {
-	return exec.Command("tmux", "new-session", "-d", "-s", name, "-c", dir).Run()
-}
-
-func tmuxKillSession(name string) error {
-	return exec.Command("tmux", "kill-session", "-t", name).Run()
 }
