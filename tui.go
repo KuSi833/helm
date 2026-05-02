@@ -233,12 +233,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) layout() {
 	leftW := m.width * 40 / 100
 	rightW := m.width - leftW
-	noteH := m.height - 4 /* info box */ - 4 /* borders/footer */ - 2 /* footer */
-	if noteH < 3 {
-		noteH = 3
+
+	// Footer is 1 line; body fills the rest. Right column = info box + note box.
+	// Info box outer height = N info lines + 2 borders. Worst case is 5 lines
+	// (name, status, tmux, slack, dir) so viewport stays stable when slack toggles.
+	infoOuter := 5 + 2
+	footerH := 1
+	noteOuter := m.height - footerH - infoOuter
+	noteInner := noteOuter - 2 // borders
+	if noteInner < 1 {
+		noteInner = 1
 	}
 	m.viewport.Width = rightW - 4
-	m.viewport.Height = noteH
+	m.viewport.Height = noteInner
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

@@ -16,11 +16,14 @@ func (m model) View() string {
 	leftW := m.width * 40 / 100
 	rightW := m.width - leftW
 
-	left := m.renderLeft(leftW, m.height-2)
-	right := m.renderRight(rightW, m.height-2)
+	footer := m.renderFooter()
+	footerH := lipgloss.Height(footer)
+	bodyH := m.height - footerH
+
+	left := m.renderLeft(leftW, bodyH)
+	right := m.renderRight(rightW, bodyH)
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	footer := m.renderFooter()
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
 }
 
@@ -96,10 +99,10 @@ func (m model) renderRow(i, w int) string {
 	num := fmt.Sprintf("%03d", wf.Number)
 	statusTxt := statusStyle(wf.Meta.Status).Render(string(wf.Meta.Status))
 
-	// budget: num(3) + 2sp + slug + pad-to-status + 1sp + status + 1sp + dot(1)
+	// budget: num(3) + 1sp + slug + 1sp + status + 1sp + dot(1)
 	statusWidth := lipgloss.Width(string(wf.Meta.Status))
 	dotWidth := 1
-	fixed := 3 + 2 + 1 + statusWidth + 1 + dotWidth // num + sep + sep + status + sep + dot
+	fixed := 3 + 1 + 1 + statusWidth + 1 + dotWidth
 	slugW := w - fixed
 	if slugW < 5 {
 		slugW = 5
@@ -107,7 +110,7 @@ func (m model) renderRow(i, w int) string {
 	slug := truncate(wf.Slug, slugW)
 	slug = padRight(slug, slugW)
 
-	row := fmt.Sprintf("%s  %s %s %s", num, slug, statusTxt, dot)
+	row := fmt.Sprintf("%s %s %s %s", num, slug, statusTxt, dot)
 	if i == m.cursor {
 		row = selectedRowStyle.Render(stripANSI(row))
 	}
@@ -116,40 +119,43 @@ func (m model) renderRow(i, w int) string {
 
 func (m model) renderRight(w, h int) string {
 	innerW := w - 2
-	infoBoxH := 4 + 2 // 4 lines + borders
-	noteH := h - infoBoxH
-
 	info := m.renderInfo(innerW)
+	infoH := lipgloss.Height(info)
+	noteH := h - infoH
 	note := m.renderNoteBox(innerW, noteH)
-
 	return lipgloss.JoinVertical(lipgloss.Left, info, note)
 }
 
 func (m model) renderInfo(innerW int) string {
 	w := m.selected()
-	lines := []string{}
-	if w == nil {
-		lines = []string{"", "", "", ""}
-	} else {
+	var lines []string
+	if w != nil {
+		nameTxt := lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")).Render(w.Name)
+		lines = append(lines, "  name    "+nameTxt)
+
 		statusTxt := statusStyle(w.Meta.Status).Render(string(w.Meta.Status))
-		tmuxTxt := lipgloss.NewStyle().Foreground(colorGray).Render("none")
+		lines = append(lines, "  status  "+statusTxt)
+
+		tmuxTxt := lipgloss.NewStyle().Foreground(colorGray).Render("off")
 		if w.HasTmux {
-			tmuxTxt = lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render("active")
+			tmuxTxt = lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render("on")
 		}
-		slackTxt := lipgloss.NewStyle().Foreground(colorGray).Render("none")
+		lines = append(lines, "  tmux    "+tmuxTxt)
+
 		if w.Meta.Slack != "" {
-			slackTxt = lipgloss.NewStyle().Foreground(colorBlue).Render(w.Meta.Slack)
+			slackTxt := lipgloss.NewStyle().Foreground(colorBlue).Render(w.Meta.Slack)
+			lines = append(lines, "  slack   "+slackTxt)
 		}
-		dirTxt := tildeAbbrev(w.Dir)
-		lines = []string{
-			"  status  " + statusTxt,
-			"  tmux    " + tmuxTxt,
-			"  slack   " + slackTxt,
-			"  dir     " + dirTxt,
-		}
+
+		dirTxt := lipgloss.NewStyle().Foreground(colorGray).Render(tildeAbbrev(w.Dir))
+		lines = append(lines, "  dir     "+dirTxt)
 	}
 	content := strings.Join(lines, "\n")
-	box := borderUnfocused.Width(innerW).Height(4).Render(content)
+	height := len(lines)
+	if height < 1 {
+		height = 1
+	}
+	box := borderUnfocused.Width(innerW).Height(height).Render(content)
 	return titledBox(box, "Info", innerW, false)
 }
 
@@ -166,43 +172,44 @@ func (m model) renderNoteBox(innerW, noteH int) string {
 	return titledBox(box, "[2] Note", innerW, m.focus == focusNote)
 }
 
-// titledBox overlays a title onto the top border of an already-rendered box.
+// titledBox replaces the top border of an already-rendered box with one that
+// embeds the title, keeping all border characters in the same color.
 func titledBox(box, title string, _ int, focused bool) string {
-	style := lipgloss.NewStyle().Foreground(colorGray).Bold(true)
+	borderColor := colorGray
 	if focused {
-		style = lipgloss.NewStyle().Foreground(colorBlue).Bold(true)
+		borderColor = colorBlue
 	}
-	titleStr := style.Render(" " + title + " ")
+	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
+	titleStyle := lipgloss.NewStyle().Foreground(borderColor).Bold(true)
+
 	lines := strings.Split(box, "\n")
 	if len(lines) == 0 {
 		return box
 	}
-	first := lines[0]
-	// Insert the title after the first 2 chars of the top border.
-	if len([]rune(stripANSI(first))) > 4 {
-		// crude: replace bytes starting at position of first border char + 1
-		// We'll just re-render: find the first '─' run and overlay title.
-		runes := []rune(first)
-		// find first non-corner char
-		idx := -1
-		for i, r := range runes {
-			if r == '─' {
-				idx = i
-				break
-			}
-		}
-		if idx >= 0 {
-			titleRunes := []rune(titleStr)
-			plain := []rune(" " + title + " ")
-			if idx+len(plain) < len(runes) {
-				out := make([]rune, 0, len(runes)+len(titleRunes))
-				out = append(out, runes[:idx]...)
-				out = append(out, titleRunes...)
-				out = append(out, runes[idx+len(plain):]...)
-				lines[0] = string(out)
-			}
-		}
+	first := stripANSI(lines[0])
+	totalW := lipgloss.Width(first)
+	if totalW < 4 {
+		return box
 	}
+	// Top border is: ╭ ─ ─ ... ─ ╮
+	// We rebuild as:  ╭ ─ <title> ─...─ ╮
+	titleText := " " + title + " "
+	// Available dashes (excluding the two corners and one leading dash for
+	// breathing room, plus the title width).
+	leadingDashes := 1
+	innerW := totalW - 2 // strip corners
+	titleW := lipgloss.Width(titleText)
+	if titleW+leadingDashes >= innerW {
+		// Title doesn't fit; return original.
+		return box
+	}
+	trailingDashes := innerW - leadingDashes - titleW
+
+	rebuilt := borderStyle.Render("╭"+strings.Repeat("─", leadingDashes)) +
+		titleStyle.Render(titleText) +
+		borderStyle.Render(strings.Repeat("─", trailingDashes)+"╮")
+
+	lines[0] = rebuilt
 	return strings.Join(lines, "\n")
 }
 
