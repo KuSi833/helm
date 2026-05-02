@@ -928,7 +928,7 @@ func openObsidian(w Workflow) {
 	if err != nil {
 		return
 	}
-	vault := filepath.Base(filepath.Dir(filepath.Dir(obsidian)))
+	vault := filepath.Base(obsidian)
 	url := fmt.Sprintf("obsidian://open?vault=%s&file=Archive/Workflows/%s/%s.md", vault, w.Name, w.Name)
 	_ = exec.Command("open", url).Run()
 }
