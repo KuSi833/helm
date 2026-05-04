@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/lipgloss"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 // ====================================================================
@@ -40,6 +41,7 @@ const (
 	modePreview
 	modeNewWorkflow
 	modeRename
+	modeHelp
 )
 
 type focusPanel int
@@ -275,8 +277,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleNewKey(msg)
 	case modeRename:
 		return m.handleRenameKey(msg)
+	case modeHelp:
+		return m.handleHelpKey(msg)
 	}
 	return m.handleNormalKey(msg)
+}
+
+func (m model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "?", "esc", "q":
+		m.mode = modeNormal
+	}
+	return m, nil
 }
 
 func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -370,6 +382,8 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modePreview
 	case "1":
 		// no-op
+	case "?":
+		m.mode = modeHelp
 	}
 	if m.cursor != m.prevCursor {
 		m.prevCursor = m.cursor
@@ -563,6 +577,14 @@ func (m model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
+	bg := m.renderBackground()
+	if m.mode == modeHelp {
+		return overlayCenter(bg, m.renderHelpModal(), m.width, m.height)
+	}
+	return bg
+}
+
+func (m model) renderBackground() string {
 	leftW := m.width * 40 / 100
 	rightW := m.width - leftW
 
@@ -750,6 +772,114 @@ func titledBox(box, title string, focused bool) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m model) renderHelpModal() string {
+	type binding struct{ k, label string }
+	type section struct {
+		title    string
+		bindings []binding
+	}
+	sections := []section{
+		{"Navigation", []binding{
+			{"↑↓", "move"}, {"g/G", "top/bottom"}, {"[ ]", "cycle filter"},
+			{"a", "all"}, {"w", "wip"}, {"o", "open"},
+		}},
+		{"Workflow", []binding{
+			{"enter", "preview note"}, {"c", "cd into dir"}, {"t", "toggle tmux"},
+			{"s", "set status"}, {"n", "new"}, {"r", "rename"}, {"d", "delete"},
+		}},
+		{"External", []binding{
+			{"O", "open in obsidian"}, {"S", "open slack"}, {"/", "search"}, {"R", "refresh"},
+		}},
+		{"Help", []binding{
+			{"?", "toggle this help"}, {"esc", "close"}, {"q", "quit"},
+		}},
+	}
+
+	titleStyle := lipgloss.NewStyle().Foreground(colorYellow).Bold(true)
+	headerStyle := lipgloss.NewStyle().Foreground(colorCyan).Bold(true)
+	keyCol := lipgloss.NewStyle().Foreground(colorWhite).Bold(true)
+	labelCol := lipgloss.NewStyle().Foreground(colorGray)
+
+	renderSection := func(sec section) string {
+		lines := []string{headerStyle.Render(sec.title)}
+		for _, b := range sec.bindings {
+			lines = append(lines, "  "+keyCol.Render(padRight(b.k, 8))+labelCol.Render(b.label))
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	colStyle := lipgloss.NewStyle().PaddingRight(4)
+	left := lipgloss.JoinVertical(lipgloss.Left,
+		colStyle.Render(renderSection(sections[0])),
+		"",
+		colStyle.Render(renderSection(sections[2])),
+	)
+	right := lipgloss.JoinVertical(lipgloss.Left,
+		renderSection(sections[1]),
+		"",
+		renderSection(sections[3]),
+	)
+	cols := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		titleStyle.Render("wf — keybindings"),
+		"",
+		cols,
+	)
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(1, 2).
+		Render(body)
+}
+
+// overlayCenter composites fg on top of bg, centered within (w, h).
+// Both inputs may contain ANSI styling. Cells of bg under fg are replaced.
+func overlayCenter(bg, fg string, w, h int) string {
+	fgW := lipgloss.Width(fg)
+	fgH := lipgloss.Height(fg)
+	x := (w - fgW) / 2
+	y := (h - fgH) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	bgLines := strings.Split(bg, "\n")
+	fgLines := strings.Split(fg, "\n")
+
+	for i, fline := range fgLines {
+		row := y + i
+		if row < 0 || row >= len(bgLines) {
+			continue
+		}
+		bgLines[row] = spliceLine(bgLines[row], fline, x)
+	}
+	return strings.Join(bgLines, "\n")
+}
+
+// spliceLine replaces visible columns [x, x+width(fg)) of bg with fg.
+// Pads with spaces if bg is shorter than x. Preserves ANSI on either side.
+func spliceLine(bg, fg string, x int) string {
+	bgW := lipgloss.Width(bg)
+	fgW := lipgloss.Width(fg)
+
+	if bgW < x {
+		bg = bg + strings.Repeat(" ", x-bgW)
+		bgW = x
+	}
+
+	left := xansi.Truncate(bg, x, "")
+	var right string
+	if bgW > x+fgW {
+		right = xansi.TruncateLeft(bg, x+fgW, "")
+	}
+	return left + fg + right
+}
+
 func (m model) renderFooter() string {
 	switch m.mode {
 	case modeSearch:
@@ -776,8 +906,7 @@ func (m model) renderFooter() string {
 			keyStyle.Render("q") + footerStyle.Render(" quit")
 	}
 	hints := []struct{ k, label string }{
-		{"n", "new"}, {"r", "rename"}, {"t", "tmux"}, {"c", "cd"}, {"s", "status"}, {"d", "delete"},
-		{"/", "search"}, {"R", "refresh"}, {"O", "obsidian"}, {"S", "slack"}, {"q", "quit"},
+		{"↑↓", "move"}, {"enter", "preview"}, {"c", "cd"}, {"?", "help"}, {"q", "quit"},
 	}
 	parts := make([]string, 0, len(hints))
 	for _, h := range hints {
