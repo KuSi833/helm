@@ -3,12 +3,34 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 func main() {
 	args := os.Args[1:]
+
+	chooseDir := ""
+	filtered := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--choosedir":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--choosedir requires a path")
+				os.Exit(1)
+			}
+			i++
+			chooseDir = args[i]
+		case strings.HasPrefix(a, "--choosedir="):
+			chooseDir = strings.TrimPrefix(a, "--choosedir=")
+		default:
+			filtered = append(filtered, a)
+		}
+	}
+	args = filtered
+
 	if len(args) == 0 {
-		runTUI()
+		runTUI(chooseDir)
 		return
 	}
 	switch args[0] {
@@ -38,6 +60,9 @@ Usage:
   wf                       launch interactive TUI
   wf list [flags]          list workflows
   wf new <name...>         create a new workflow
+
+TUI flags:
+      --choosedir <path>   write selected workflow's dir to <path> on 'c' (used by fish wrapper)
 
 List flags:
   -s, --status <list>      comma-separated status filter

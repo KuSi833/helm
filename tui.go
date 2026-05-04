@@ -72,11 +72,12 @@ type model struct {
 	renderedNote string
 
 	attachTmux string
+	cdTarget   string
 
 	err string
 }
 
-func runTUI() {
+func runTUI(chooseDir string) {
 	if _, err := WorkflowsDir(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -92,7 +93,16 @@ func runTUI() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if mm, ok := res.(model); ok && mm.attachTmux != "" {
+	mm, ok := res.(model)
+	if !ok {
+		return
+	}
+	if chooseDir != "" && mm.cdTarget != "" {
+		if werr := os.WriteFile(chooseDir, []byte(mm.cdTarget), 0644); werr != nil {
+			fmt.Fprintln(os.Stderr, werr)
+		}
+	}
+	if mm.attachTmux != "" {
 		_ = execTmuxAttach(mm.attachTmux)
 	}
 }
@@ -326,6 +336,11 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.err = err.Error()
 			}
 			m.refresh()
+		}
+	case "c":
+		if w := m.selected(); w != nil {
+			m.cdTarget = w.Dir
+			return m, tea.Quit
 		}
 	case "n":
 		m.mode = modeNewWorkflow
@@ -761,7 +776,7 @@ func (m model) renderFooter() string {
 			keyStyle.Render("q") + footerStyle.Render(" quit")
 	}
 	hints := []struct{ k, label string }{
-		{"n", "new"}, {"r", "rename"}, {"t", "tmux"}, {"s", "status"}, {"d", "delete"},
+		{"n", "new"}, {"r", "rename"}, {"t", "tmux"}, {"c", "cd"}, {"s", "status"}, {"d", "delete"},
 		{"/", "search"}, {"R", "refresh"}, {"O", "obsidian"}, {"S", "slack"}, {"q", "quit"},
 	}
 	parts := make([]string, 0, len(hints))
