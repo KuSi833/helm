@@ -697,25 +697,38 @@ func (m model) renderInfo(innerW int) string {
 	w := m.selected()
 	var lines []string
 	if w != nil {
-		nameTxt := lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")).Render(w.Name)
-		lines = append(lines, "  name    "+nameTxt)
-
-		statusTxt := statusStyle(w.Meta.Status).Render(string(w.Meta.Status))
-		lines = append(lines, "  status  "+statusTxt)
-
-		tmuxTxt := lipgloss.NewStyle().Foreground(colorGray).Render("off")
-		if w.HasTmux {
-			tmuxTxt = lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render("on")
+		// "  label    " = 2 indent + 6 label + 4 gap = 12; box has 2 border chars
+		const labelW = 12
+		valW := innerW - 2 - labelW
+		if valW < 5 {
+			valW = 5
 		}
-		lines = append(lines, "  tmux    "+tmuxTxt)
+		hangingIndent := strings.Repeat(" ", labelW)
+		wrap := func(label, value string, style lipgloss.Style) {
+			rows := wrapPlain(value, valW)
+			for i, row := range rows {
+				prefix := hangingIndent
+				if i == 0 {
+					prefix = label
+				}
+				lines = append(lines, prefix+style.Render(row))
+			}
+		}
+
+		wrap("  name    ", w.Name, lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")))
+		wrap("  status  ", string(w.Meta.Status), statusStyle(w.Meta.Status))
+
+		tmuxStyle := lipgloss.NewStyle().Foreground(colorGray)
+		tmuxVal := "off"
+		if w.HasTmux {
+			tmuxStyle = lipgloss.NewStyle().Foreground(colorCyan).Bold(true)
+			tmuxVal = "on"
+		}
+		wrap("  tmux    ", tmuxVal, tmuxStyle)
 
 		if w.Meta.Slack != "" {
-			slackTxt := lipgloss.NewStyle().Foreground(colorBlue).Render(w.Meta.Slack)
-			lines = append(lines, "  slack   "+slackTxt)
+			wrap("  slack   ", w.Meta.Slack, lipgloss.NewStyle().Foreground(colorBlue))
 		}
-
-		dirTxt := lipgloss.NewStyle().Foreground(colorGray).Render(tildeAbbrev(w.Dir))
-		lines = append(lines, "  dir     "+dirTxt)
 	}
 	height := len(lines)
 	if height < 1 {
@@ -723,6 +736,26 @@ func (m model) renderInfo(innerW int) string {
 	}
 	box := borderUnfocused.Width(innerW).Height(height).Render(strings.Join(lines, "\n"))
 	return titledBox(box, "Info", false)
+}
+
+// wrapPlain breaks s into chunks of at most n runes (hard wrap, no word-break logic).
+func wrapPlain(s string, n int) []string {
+	if n <= 0 {
+		return []string{s}
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return []string{s}
+	}
+	var out []string
+	for i := 0; i < len(r); i += n {
+		end := i + n
+		if end > len(r) {
+			end = len(r)
+		}
+		out = append(out, string(r[i:end]))
+	}
+	return out
 }
 
 func (m model) renderNoteBox(innerW, noteH int) string {
@@ -935,14 +968,6 @@ func (m model) renderStatusFooter() string {
 // ====================================================================
 // Small render helpers
 // ====================================================================
-
-func tildeAbbrev(p string) string {
-	home, err := os.UserHomeDir()
-	if err == nil && strings.HasPrefix(p, home) {
-		return "~" + strings.TrimPrefix(p, home)
-	}
-	return p
-}
 
 func truncate(s string, n int) string {
 	if n <= 0 {
