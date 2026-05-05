@@ -181,7 +181,8 @@ func (m *model) layout() {
 	leftW := m.width * 40 / 100
 	rightW := m.width - leftW
 
-	infoOuter := 5 + 2 // worst-case 5 info lines + 2 border chars
+	innerW := rightW - 2
+	infoOuter := lipgloss.Height(m.renderInfo(innerW))
 	footerH := 1
 	noteOuter := m.height - footerH - infoOuter
 	noteInner := noteOuter - 2
@@ -387,6 +388,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.cursor != m.prevCursor {
 		m.prevCursor = m.cursor
+		m.layout()
 		m.renderNote()
 	}
 	return m, nil
@@ -436,6 +438,7 @@ func (m model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.applyFilter()
 	if m.cursor != m.prevCursor {
 		m.prevCursor = m.cursor
+		m.layout()
 		m.renderNote()
 	}
 	return m, cmd
@@ -697,8 +700,8 @@ func (m model) renderInfo(innerW int) string {
 	w := m.selected()
 	var lines []string
 	if w != nil {
-		// "  label    " = 2 indent + 6 label + 4 gap = 12; box has 2 border chars
-		const labelW = 12
+		// "label    " = 6 label + 4 gap = 10; box has 2 border chars
+		const labelW = 10
 		valW := innerW - 2 - labelW
 		if valW < 5 {
 			valW = 5
@@ -715,8 +718,8 @@ func (m model) renderInfo(innerW int) string {
 			}
 		}
 
-		wrap("  name    ", w.Name, lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")))
-		wrap("  status  ", string(w.Meta.Status), statusStyle(w.Meta.Status))
+		wrap("name    ", w.Name, lipgloss.NewStyle().Foreground(lipgloss.Color("#C792EA")))
+		wrap("status  ", string(w.Meta.Status), statusStyle(w.Meta.Status))
 
 		tmuxStyle := lipgloss.NewStyle().Foreground(colorGray)
 		tmuxVal := "off"
@@ -724,10 +727,10 @@ func (m model) renderInfo(innerW int) string {
 			tmuxStyle = lipgloss.NewStyle().Foreground(colorCyan).Bold(true)
 			tmuxVal = "on"
 		}
-		wrap("  tmux    ", tmuxVal, tmuxStyle)
+		wrap("tmux    ", tmuxVal, tmuxStyle)
 
 		if w.Meta.Slack != "" {
-			wrap("  slack   ", w.Meta.Slack, lipgloss.NewStyle().Foreground(colorBlue))
+			wrap("slack   ", w.Meta.Slack, lipgloss.NewStyle().Foreground(colorBlue))
 		}
 	}
 	height := len(lines)
