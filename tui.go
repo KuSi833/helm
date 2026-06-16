@@ -327,6 +327,10 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filter = filterOpen
 		m.cursor, m.scroll = 0, 0
 		m.applyFilter()
+	case "r":
+		m.filter = filterRecurring
+		m.cursor, m.scroll = 0, 0
+		m.applyFilter()
 	case "]", "right":
 		m.filter = nextFilter(m.filter, +1)
 		m.cursor, m.scroll = 0, 0
@@ -365,7 +369,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.nameInput.SetValue("")
 		m.nameInput.Focus()
 		return m, textinput.Blink
-	case "r":
+	case "R":
 		if w := m.selected(); w != nil {
 			m.mode = modeRename
 			m.nameInput.SetValue(w.Slug)
@@ -373,7 +377,7 @@ func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.nameInput.Focus()
 			return m, textinput.Blink
 		}
-	case "R":
+	case "ctrl+r":
 		m.refresh()
 	case "O":
 		if w := m.selected(); w != nil {
@@ -635,7 +639,7 @@ func (m model) renderFilterTabs() string {
 	return strings.Join([]string{
 		render("[w]ip", filterWIP),
 		render("[o]pen", filterOpen),
-		render("recurring", filterRecurring),
+		render("[r]ec", filterRecurring),
 		render("[a]ll", filterAll),
 	}, "  ")
 }
@@ -825,14 +829,14 @@ func (m model) renderHelpModal() string {
 	sections := []section{
 		{"Navigation", []binding{
 			{"↑↓", "move"}, {"g/G", "top/bottom"}, {"[ ]", "cycle filter"},
-			{"a", "all"}, {"w", "wip"}, {"o", "open"}, {"[ ]", "recurring (cycle)"},
+			{"a", "all"}, {"w", "wip"}, {"o", "open"}, {"r", "recurring"},
 		}},
 		{"Workflow", []binding{
 			{"enter", "preview note"}, {"c", "cd into dir"}, {"t", "toggle tmux"},
-			{"s", "set status"}, {"n", "new"}, {"r", "rename"}, {"d", "delete"},
+			{"s", "set status"}, {"n", "new"}, {"R", "rename"}, {"d", "delete"},
 		}},
 		{"External", []binding{
-			{"O", "open in obsidian"}, {"S", "open slack"}, {"/", "search"}, {"R", "refresh"},
+			{"O", "open in obsidian"}, {"S", "open slack"}, {"/", "search"}, {"ctrl+r", "refresh"},
 		}},
 		{"Help", []binding{
 			{"?", "toggle this help"}, {"esc", "close"}, {"q", "quit"},
