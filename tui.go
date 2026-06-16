@@ -26,10 +26,11 @@ type filterMode int
 const (
 	filterWIP filterMode = iota
 	filterOpen
+	filterRecurring
 	filterAll
 )
 
-var filterCycle = []filterMode{filterWIP, filterOpen, filterAll}
+var filterCycle = []filterMode{filterWIP, filterOpen, filterRecurring, filterAll}
 
 type tuiMode int
 
@@ -153,6 +154,10 @@ func (m *model) applyFilter() {
 			}
 		case filterOpen:
 			if !w.Meta.Status.Active() {
+				continue
+			}
+		case filterRecurring:
+			if w.Meta.Status != StatusRecurring {
 				continue
 			}
 		}
@@ -480,6 +485,8 @@ func (m model) handleStatusKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		apply(StatusLater)
 	case "b":
 		apply(StatusBlocked)
+	case "e":
+		apply(StatusRecurring)
 	case "c":
 		apply(StatusCompleted)
 	case "d":
@@ -628,6 +635,7 @@ func (m model) renderFilterTabs() string {
 	return strings.Join([]string{
 		render("[w]ip", filterWIP),
 		render("[o]pen", filterOpen),
+		render("recurring", filterRecurring),
 		render("[a]ll", filterAll),
 	}, "  ")
 }
@@ -817,7 +825,7 @@ func (m model) renderHelpModal() string {
 	sections := []section{
 		{"Navigation", []binding{
 			{"↑↓", "move"}, {"g/G", "top/bottom"}, {"[ ]", "cycle filter"},
-			{"a", "all"}, {"w", "wip"}, {"o", "open"},
+			{"a", "all"}, {"w", "wip"}, {"o", "open"}, {"[ ]", "recurring (cycle)"},
 		}},
 		{"Workflow", []binding{
 			{"enter", "preview note"}, {"c", "cd into dir"}, {"t", "toggle tmux"},
@@ -1032,6 +1040,8 @@ func statusStyle(s Status) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(colorMagenta)
 	case StatusBlocked:
 		return lipgloss.NewStyle().Foreground(colorRed).Bold(true)
+	case StatusRecurring:
+		return lipgloss.NewStyle().Foreground(colorCyan)
 	case StatusCompleted:
 		return lipgloss.NewStyle().Foreground(colorGreen)
 	case StatusDead, StatusUnknown:

@@ -22,14 +22,17 @@ const (
 	StatusTodo      Status = "todo"
 	StatusLater     Status = "later"
 	StatusBlocked   Status = "blocked"
+	StatusRecurring Status = "recurring"
 	StatusCompleted Status = "completed"
 	StatusDead      Status = "dead"
 	StatusUnknown   Status = "unknown"
 )
 
-var allStatuses = []Status{StatusWIP, StatusTodo, StatusLater, StatusBlocked, StatusCompleted, StatusDead}
+var allStatuses = []Status{StatusWIP, StatusTodo, StatusLater, StatusBlocked, StatusRecurring, StatusCompleted, StatusDead}
 
-func (s Status) Active() bool    { return s == StatusWIP || s == StatusBlocked }
+func (s Status) Active() bool {
+	return s == StatusWIP || s == StatusBlocked || s == StatusLater
+}
 func (s Status) NeedsTmux() bool { return s == StatusWIP || s == StatusTodo || s == StatusBlocked }
 
 // ---------------- Env ----------------
