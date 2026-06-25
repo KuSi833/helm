@@ -30,8 +30,9 @@ const (
 
 var allStatuses = []Status{StatusWIP, StatusTodo, StatusLater, StatusBlocked, StatusRecurring, StatusCompleted, StatusDead}
 
-func (s Status) Active() bool {
-	return s == StatusWIP || s == StatusBlocked || s == StatusLater
+func (s Status) Active() bool { return s == StatusWIP }
+func (s Status) Open() bool {
+	return s == StatusWIP || s == StatusBlocked || s == StatusTodo
 }
 func (s Status) NeedsTmux() bool { return s == StatusWIP || s == StatusTodo || s == StatusBlocked }
 

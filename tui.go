@@ -153,7 +153,7 @@ func (m *model) applyFilter() {
 				continue
 			}
 		case filterOpen:
-			if !w.Meta.Status.Active() {
+			if !w.Meta.Status.Open() {
 				continue
 			}
 		case filterRecurring:
