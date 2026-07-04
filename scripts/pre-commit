@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fail the commit if the generated command docs are out of sync with the
+# command table. Regenerate with `go generate ./...`.
+#
+# Install: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+set -e
+if ! go run . gen-docs --check; then
+	echo "pre-commit: COMMANDS.md is stale — run 'go generate ./...' and 'git add COMMANDS.md'" >&2
+	exit 1
+fi
