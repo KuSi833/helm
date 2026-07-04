@@ -1,33 +1,35 @@
 # helm / wf
 
-The `wf` workflow-manager CLI. Hand-rolled arg parsing (no Cobra).
+The `wf` workflow-manager CLI, built with [Cobra](https://github.com/spf13/cobra).
 
-## Single source of truth for commands
+## Command surface = the Cobra tree
 
-`commands.go` holds the `commands` table — the one place that defines wf's
-command surface. Three things render from it, so they cannot drift:
-
-- **dispatch** — `main.go` → `lookup(args[0]).Run`
-- **`--help`** — `usage.go` `renderUsage()`
-- **the doc** — `wf gen-docs` → `COMMANDS.md` (wraps `renderUsage()`)
+The Cobra command tree in `main.go` (`rootCmd`) + `cmd.go` (`listCmd`/`newCmd`)
+is the single source of truth. Cobra generates `--help` from it, and
+`wf gen-docs` (in `gendocs.go`) renders `COMMANDS.md` from the same tree via
+`cobra/doc`. So help and docs can't drift from dispatch — there's no
+hand-written usage string or flag table.
 
 `COMMANDS.md` is **generated — never hand-edit it.**
 
 ### Adding / changing a command
 
-1. Edit the `commands` table (and add its `flagDoc` entries for any flags).
+1. Add/modify the `*cobra.Command` (a new `fooCmd()` wired into `rootCmd`, or a
+   `Flags()` call). Flags are auto-discovered — no separate doc entry needed.
 2. `go generate ./...` — regenerates `COMMANDS.md`.
 3. `git add COMMANDS.md` and commit.
 
-A pre-commit hook (`scripts/pre-commit`, run via `wf gen-docs --check`) blocks
-the commit if `COMMANDS.md` is stale. On a fresh clone, install it once:
+A pre-commit hook (`scripts/pre-commit`, runs `wf gen-docs --check`) blocks the
+commit if `COMMANDS.md` is stale. On a fresh clone, install it once:
 
 ```sh
 ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 ```
 
-### Known gap
+### Notes
 
-Flags are documented in the table by hand, not auto-discovered from the
-parsing code. If you add a flag inside a `cmd*` function, add its `flagDoc`
-to the table too, or the docs won't mention it.
+- No-subcommand `wf` launches the TUI (`rootCmd`'s `RunE`). `--choosedir` is a
+  persistent flag read by the fish wrapper.
+- `gen-docs` is a hidden command; it's excluded from `--help` and `COMMANDS.md`.
+- `DisableAutoGenTag` is set so the generated docs have no timestamp — keeps
+  `--check` output stable.
