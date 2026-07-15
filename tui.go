@@ -73,11 +73,19 @@ type model struct {
 
 	viewport     viewport.Model
 	renderedNote string
+	noteCache    map[string]renderedNoteCacheEntry
 
 	attachTmux string
 	cdTarget   string
 
 	err string
+}
+
+type renderedNoteCacheEntry struct {
+	width       int
+	size        int64
+	modTimeNano int64
+	content     string
 }
 
 func runTUI(chooseDir string) {
@@ -126,6 +134,7 @@ func initialModel() model {
 		search:     si,
 		nameInput:  ni,
 		viewport:   viewport.New(0, 0),
+		noteCache:  make(map[string]renderedNoteCacheEntry),
 		prevCursor: -1,
 	}
 	m.refresh()
@@ -220,6 +229,24 @@ func (m *model) renderNote() {
 		return
 	}
 	notePath := filepath.Join(w.Dir, "notes", w.Name+".md")
+	info, err := os.Stat(notePath)
+	if err != nil {
+		m.renderedNote = ""
+		m.viewport.SetContent("")
+		return
+	}
+	width := m.viewport.Width
+	if width <= 0 {
+		width = 60
+	}
+	if cached, ok := m.noteCache[notePath]; ok &&
+		cached.width == width &&
+		cached.size == info.Size() &&
+		cached.modTimeNano == info.ModTime().UnixNano() {
+		m.renderedNote = cached.content
+		m.viewport.SetContent(cached.content)
+		return
+	}
 	data, err := os.ReadFile(notePath)
 	if err != nil {
 		m.renderedNote = ""
@@ -227,11 +254,6 @@ func (m *model) renderNote() {
 		return
 	}
 	body := wikiToMarkdown(stripFrontmatter(string(data)))
-
-	width := m.viewport.Width
-	if width <= 0 {
-		width = 60
-	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(glamourKittyStyle()),
 		glamour.WithWordWrap(width),
@@ -246,6 +268,12 @@ func (m *model) renderNote() {
 		out = body
 	}
 	m.renderedNote = out
+	m.noteCache[notePath] = renderedNoteCacheEntry{
+		width:       width,
+		size:        info.Size(),
+		modTimeNano: info.ModTime().UnixNano(),
+		content:     out,
+	}
 	m.viewport.SetContent(out)
 }
 
@@ -299,7 +327,7 @@ func (m model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "j", "down":
 		if m.cursor < len(m.visible)-1 {
@@ -839,7 +867,7 @@ func (m model) renderHelpModal() string {
 			{"O", "open in obsidian"}, {"S", "open slack"}, {"/", "search"}, {"ctrl+r", "refresh"},
 		}},
 		{"Help", []binding{
-			{"?", "toggle this help"}, {"esc", "close"}, {"q", "quit"},
+			{"?", "toggle this help"}, {"esc/q", "close"},
 		}},
 	}
 
@@ -954,7 +982,7 @@ func (m model) renderFooter() string {
 			keyStyle.Render("q") + footerStyle.Render(" quit")
 	}
 	hints := []struct{ k, label string }{
-		{"↑↓", "move"}, {"enter", "preview"}, {"c", "cd"}, {"?", "help"}, {"q", "quit"},
+		{"↑↓", "move"}, {"enter", "preview"}, {"c", "cd"}, {"?", "help"}, {"esc/q", "quit"},
 	}
 	parts := make([]string, 0, len(hints))
 	for _, h := range hints {
@@ -1061,22 +1089,22 @@ func glamourKittyStyle() ansi.StyleConfig {
 	italic := true
 
 	return ansi.StyleConfig{
-		Document:   ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}},
-		BlockQuote: ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}, Indent: uint1(1)},
-		Paragraph:  ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}},
-		List:       ansi.StyleList{StyleBlock: ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}}},
-		Heading:    ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
-		H1:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "# ", Color: str("#FFCB6B"), Bold: &bold}},
-		H2:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "## ", Color: str("#C792EA"), Bold: &bold}},
-		H3:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "### ", Color: str("#89DDFF"), Bold: &bold}},
-		H4:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
-		H5:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
-		H6:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
-		Strong:     ansi.StylePrimitive{Color: str("#FFCB6B"), Bold: &bold},
-		Emph:       ansi.StylePrimitive{Color: str("#C3E88D"), Italic: &italic},
+		Document:       ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}},
+		BlockQuote:     ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}, Indent: uint1(1)},
+		Paragraph:      ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}},
+		List:           ansi.StyleList{StyleBlock: ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}}},
+		Heading:        ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
+		H1:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "# ", Color: str("#FFCB6B"), Bold: &bold}},
+		H2:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "## ", Color: str("#C792EA"), Bold: &bold}},
+		H3:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "### ", Color: str("#89DDFF"), Bold: &bold}},
+		H4:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
+		H5:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
+		H6:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
+		Strong:         ansi.StylePrimitive{Color: str("#FFCB6B"), Bold: &bold},
+		Emph:           ansi.StylePrimitive{Color: str("#C3E88D"), Italic: &italic},
 		HorizontalRule: ansi.StylePrimitive{Color: str("#636261"), Format: "---"},
-		Item:        ansi.StylePrimitive{Color: str("#EEFFFF")},
-		Enumeration: ansi.StylePrimitive{Color: str("#EEFFFF")},
+		Item:           ansi.StylePrimitive{Color: str("#EEFFFF")},
+		Enumeration:    ansi.StylePrimitive{Color: str("#EEFFFF")},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")},
 			Ticked:         "[x] ",

@@ -1,6 +1,23 @@
 package main
 
-import "os/exec"
+import (
+	"os/exec"
+	"strings"
+)
+
+func tmuxSessionSet() map[string]bool {
+	out := make(map[string]bool)
+	data, err := exec.Command("tmux", "list-sessions", "-F", "#S").Output()
+	if err != nil {
+		return out
+	}
+	for _, name := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
 
 func tmuxHasSession(name string) bool {
 	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
