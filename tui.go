@@ -73,11 +73,19 @@ type model struct {
 
 	viewport     viewport.Model
 	renderedNote string
+	noteCache    map[string]renderedNoteCacheEntry
 
 	attachTmux string
 	cdTarget   string
 
 	err string
+}
+
+type renderedNoteCacheEntry struct {
+	width       int
+	size        int64
+	modTimeNano int64
+	content     string
 }
 
 func runTUI(chooseDir string) {
@@ -126,6 +134,7 @@ func initialModel() model {
 		search:     si,
 		nameInput:  ni,
 		viewport:   viewport.New(0, 0),
+		noteCache:  make(map[string]renderedNoteCacheEntry),
 		prevCursor: -1,
 	}
 	m.refresh()
@@ -144,7 +153,7 @@ func (m *model) refresh() {
 }
 
 func (m *model) applyFilter() {
-	q := strings.ToLower(strings.TrimSpace(m.search.Value()))
+	q := m.searchQuery()
 	var out []Workflow
 	for _, w := range m.all {
 		switch m.filter {
@@ -161,7 +170,7 @@ func (m *model) applyFilter() {
 				continue
 			}
 		}
-		if q != "" && !strings.Contains(strings.ToLower(w.Name), q) {
+		if !fuzzyMatch(workflowSearchText(w), q) {
 			continue
 		}
 		out = append(out, w)
@@ -173,6 +182,47 @@ func (m *model) applyFilter() {
 	if len(out) == 0 {
 		m.cursor = 0
 	}
+}
+
+func (m model) searchQuery() string {
+	return strings.ToLower(strings.TrimSpace(m.search.Value()))
+}
+
+func workflowSearchText(w Workflow) string {
+	return strings.ToLower(fmt.Sprintf("%03d %s", w.Number, w.Slug))
+}
+
+func fuzzyMatch(haystack, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	return fuzzyPositions(haystack, needle) != nil
+}
+
+func fuzzyPositions(haystack, needle string) []int {
+	if needle == "" {
+		return nil
+	}
+	haystackRunes := []rune(haystack)
+	needleRunes := []rune(needle)
+	positions := make([]int, 0, len(needleRunes))
+	pos := 0
+	for _, want := range needleRunes {
+		found := -1
+		for pos < len(haystackRunes) {
+			if haystackRunes[pos] == want {
+				found = pos
+				pos++
+				break
+			}
+			pos++
+		}
+		if found == -1 {
+			return nil
+		}
+		positions = append(positions, found)
+	}
+	return positions
 }
 
 func (m model) selected() *Workflow {
@@ -220,6 +270,24 @@ func (m *model) renderNote() {
 		return
 	}
 	notePath := filepath.Join(w.Dir, "notes", w.Name+".md")
+	info, err := os.Stat(notePath)
+	if err != nil {
+		m.renderedNote = ""
+		m.viewport.SetContent("")
+		return
+	}
+	width := m.viewport.Width
+	if width <= 0 {
+		width = 60
+	}
+	if cached, ok := m.noteCache[notePath]; ok &&
+		cached.width == width &&
+		cached.size == info.Size() &&
+		cached.modTimeNano == info.ModTime().UnixNano() {
+		m.renderedNote = cached.content
+		m.viewport.SetContent(cached.content)
+		return
+	}
 	data, err := os.ReadFile(notePath)
 	if err != nil {
 		m.renderedNote = ""
@@ -227,11 +295,6 @@ func (m *model) renderNote() {
 		return
 	}
 	body := wikiToMarkdown(stripFrontmatter(string(data)))
-
-	width := m.viewport.Width
-	if width <= 0 {
-		width = 60
-	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStyles(glamourKittyStyle()),
 		glamour.WithWordWrap(width),
@@ -246,6 +309,12 @@ func (m *model) renderNote() {
 		out = body
 	}
 	m.renderedNote = out
+	m.noteCache[notePath] = renderedNoteCacheEntry{
+		width:       width,
+		size:        info.Size(),
+		modTimeNano: info.ModTime().UnixNano(),
+		content:     out,
+	}
 	m.viewport.SetContent(out)
 }
 
@@ -299,7 +368,7 @@ func (m model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "j", "down":
 		if m.cursor < len(m.visible)-1 {
@@ -677,12 +746,12 @@ func (m model) renderListRows(w, h int) string {
 
 func (m model) renderRow(i, w int) string {
 	wf := m.visible[i]
-	dot := tmuxDotInactive
-	if wf.HasTmux {
-		dot = tmuxDotActive
-	}
 	num := fmt.Sprintf("%03d", wf.Number)
-	statusTxt := statusStyle(wf.Meta.Status).Render(string(wf.Meta.Status))
+	selected := i == m.cursor
+	baseStyle := lipgloss.NewStyle()
+	if selected {
+		baseStyle = selectedRowStyle
+	}
 
 	statusWidth := lipgloss.Width(string(wf.Meta.Status))
 	fixed := 3 + 1 + 1 + statusWidth + 1 + 1 // num + sep + sep + status + sep + dot
@@ -692,11 +761,55 @@ func (m model) renderRow(i, w int) string {
 	}
 	slug := padRight(truncate(wf.Slug, slugW), slugW)
 
-	row := fmt.Sprintf("%s %s %s %s", num, slug, statusTxt, dot)
-	if i == m.cursor {
-		row = selectedRowStyle.Render(stripANSI(row))
+	matches := matchSet(fuzzyPositions(strings.ToLower(num+" "+slug), m.searchQuery()))
+	numTxt := renderMatchedText(num, 0, matches, baseStyle)
+	sep1 := renderMatchedText(" ", len([]rune(num)), matches, baseStyle)
+	slugTxt := renderMatchedText(slug, len([]rune(num))+1, matches, baseStyle)
+	sep2 := baseStyle.Render(" ")
+	sep3 := baseStyle.Render(" ")
+
+	status := string(wf.Meta.Status)
+	statusTxt := statusStyle(wf.Meta.Status).Render(status)
+	if selected {
+		statusTxt = baseStyle.Render(status)
 	}
-	return row
+
+	dot := tmuxDotInactive
+	if wf.HasTmux {
+		dot = tmuxDotActive
+	}
+	if selected {
+		dot = baseStyle.Render("●")
+	}
+
+	return numTxt + sep1 + slugTxt + sep2 + statusTxt + sep3 + dot
+}
+
+func matchSet(positions []int) map[int]bool {
+	if len(positions) == 0 {
+		return nil
+	}
+	out := make(map[int]bool, len(positions))
+	for _, pos := range positions {
+		out[pos] = true
+	}
+	return out
+}
+
+func renderMatchedText(text string, offset int, matches map[int]bool, base lipgloss.Style) string {
+	if len(matches) == 0 {
+		return base.Render(text)
+	}
+	var b strings.Builder
+	for i, r := range []rune(text) {
+		ch := string(r)
+		if matches[offset+i] {
+			b.WriteString(fuzzyMatchStyle.Render(ch))
+			continue
+		}
+		b.WriteString(base.Render(ch))
+	}
+	return b.String()
 }
 
 func (m model) renderRight(w, h int) string {
@@ -839,7 +952,7 @@ func (m model) renderHelpModal() string {
 			{"O", "open in obsidian"}, {"S", "open slack"}, {"/", "search"}, {"ctrl+r", "refresh"},
 		}},
 		{"Help", []binding{
-			{"?", "toggle this help"}, {"esc", "close"}, {"q", "quit"},
+			{"?", "toggle this help"}, {"esc/q", "close"},
 		}},
 	}
 
@@ -954,7 +1067,7 @@ func (m model) renderFooter() string {
 			keyStyle.Render("q") + footerStyle.Render(" quit")
 	}
 	hints := []struct{ k, label string }{
-		{"↑↓", "move"}, {"enter", "preview"}, {"c", "cd"}, {"?", "help"}, {"q", "quit"},
+		{"↑↓", "move"}, {"enter", "preview"}, {"c", "cd"}, {"?", "help"}, {"esc/q", "quit"},
 	}
 	parts := make([]string, 0, len(hints))
 	for _, h := range hints {
@@ -1024,6 +1137,7 @@ var (
 	borderUnfocused = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorGray)
 
 	selectedRowStyle = lipgloss.NewStyle().Background(colorGray).Foreground(colorWhite)
+	fuzzyMatchStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#1e1e2e")).Background(lipgloss.Color("#f5c2e7")).Bold(true)
 	tmuxDotActive    = lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render("●")
 	tmuxDotInactive  = lipgloss.NewStyle().Foreground(colorGray).Render("●")
 
@@ -1061,22 +1175,22 @@ func glamourKittyStyle() ansi.StyleConfig {
 	italic := true
 
 	return ansi.StyleConfig{
-		Document:   ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}},
-		BlockQuote: ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}, Indent: uint1(1)},
-		Paragraph:  ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}},
-		List:       ansi.StyleList{StyleBlock: ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}}},
-		Heading:    ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
-		H1:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "# ", Color: str("#FFCB6B"), Bold: &bold}},
-		H2:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "## ", Color: str("#C792EA"), Bold: &bold}},
-		H3:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "### ", Color: str("#89DDFF"), Bold: &bold}},
-		H4:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
-		H5:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
-		H6:         ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
-		Strong:     ansi.StylePrimitive{Color: str("#FFCB6B"), Bold: &bold},
-		Emph:       ansi.StylePrimitive{Color: str("#C3E88D"), Italic: &italic},
+		Document:       ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}},
+		BlockQuote:     ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}, Indent: uint1(1)},
+		Paragraph:      ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}},
+		List:           ansi.StyleList{StyleBlock: ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")}}},
+		Heading:        ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
+		H1:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "# ", Color: str("#FFCB6B"), Bold: &bold}},
+		H2:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "## ", Color: str("#C792EA"), Bold: &bold}},
+		H3:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "### ", Color: str("#89DDFF"), Bold: &bold}},
+		H4:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
+		H5:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
+		H6:             ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Color: str("#82AAFF"), Bold: &bold}},
+		Strong:         ansi.StylePrimitive{Color: str("#FFCB6B"), Bold: &bold},
+		Emph:           ansi.StylePrimitive{Color: str("#C3E88D"), Italic: &italic},
 		HorizontalRule: ansi.StylePrimitive{Color: str("#636261"), Format: "---"},
-		Item:        ansi.StylePrimitive{Color: str("#EEFFFF")},
-		Enumeration: ansi.StylePrimitive{Color: str("#EEFFFF")},
+		Item:           ansi.StylePrimitive{Color: str("#EEFFFF")},
+		Enumeration:    ansi.StylePrimitive{Color: str("#EEFFFF")},
 		Task: ansi.StyleTask{
 			StylePrimitive: ansi.StylePrimitive{Color: str("#EEFFFF")},
 			Ticked:         "[x] ",
