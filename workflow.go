@@ -192,6 +192,7 @@ func ScanWorkflows() ([]Workflow, error) {
 		}
 		return nil, err
 	}
+	tmuxSessions := tmuxSessionSet()
 	var out []Workflow
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -209,7 +210,7 @@ func ScanWorkflows() ([]Workflow, error) {
 			Name:    e.Name(),
 			Dir:     dir,
 			Meta:    loadMeta(dir),
-			HasTmux: tmuxHasSession(e.Name()),
+			HasTmux: tmuxSessions[e.Name()],
 		}
 		out = append(out, wf)
 	}

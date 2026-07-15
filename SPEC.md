@@ -193,7 +193,7 @@ The TUI has 7 modes:
 ​
 | Key | Action |
 |---|---|
-| `q` | Quit |
+| `q` / `esc` | Quit |
 | `j` / `down` | Move cursor down |
 | `k` / `up` | Move cursor up |
 | `g` | Jump to first item |
